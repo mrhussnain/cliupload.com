@@ -60,7 +60,10 @@ CliUpload implements multiple layers of security:
 1.  **Client-Side Encryption:** When enabled, files are encrypted using `AES-GCM-256` in your browser. The key is appended to the URL as a `#` fragment, meaning it is **never** sent to the server.
 2.  **Server-Side Hashing:** Passwords for protected files are hashed using PHP's `password_hash()` and never stored in plaintext.
 3.  **Automatic Cleanup:** A background cron job purges expired files, ensuring your data doesn't linger longer than intended.
-4.  **XSS Protection:** The server forces `Content-Disposition: attachment` for dangerous types (`.html`, `.php`, `.js`) and sanitizes IDs to prevent traversal.
+4.  **Security Hardening:** The server forces `Content-Disposition: attachment` for **all** file types to prevent accidental execution/rendering in the browser.
+5.  **Metadata Protection:** Direct web access to the `uploads/` directory is strictly forbidden via `.htaccess`.
+6.  **CSRF Protection:** All administrative actions (deletion, logout) are protected by anti-CSRF tokens.
+7.  **XSS Protection:** Strict sanitization of IDs and content-types to prevent traversal and injection attacks.
 
 ---
 
