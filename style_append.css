@@ -1,0 +1,18 @@
+
+/* HosterOcean Link */
+.hoster-ocean-link {
+    font-weight: 700;
+    background: linear-gradient(135deg, #3fb950 0%, #2ea043 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: var(--success); /* Fallback */
+    text-decoration: none;
+    display: inline-block;
+    transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.hoster-ocean-link:hover {
+    transform: scale(1.05);
+    filter: brightness(1.2);
+}

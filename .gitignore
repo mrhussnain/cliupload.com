@@ -1,0 +1,24 @@
+# CliUpload - Git Ignore
+# Ignore uploaded files
+uploads/
+*.bin
+*.enc
+*.json
+
+# Logs
+*.log
+cleanup.log
+
+# Temporary/Sensitive files
+secret.txt
+cookies.txt
+.DS_Store
+Thumbs.db
+
+# Sessions and cache
+sess_*
+.cache/
+
+# Local configuration (if any)
+config.local.php
+.env
