@@ -2,6 +2,8 @@
 
 A modern, terminal-centric file sharing service. Focus on privacy, speed, and simplicity. Upload from your command line (`curl`) or the beautiful web interface with zero-knowledge encryption.
 
+**🌐 Live Demo:** [cliupload.com](https://cliupload.com)
+
 [![PHP Version](https://img.shields.io/badge/PHP-7.4+-777bb4.svg?style=flat-square&logo=php)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Privacy](https://img.shields.io/badge/Privacy-Zero--Knowledge-blueviolet?style=flat-square)](https://cliupload.com)
