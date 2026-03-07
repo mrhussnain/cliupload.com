@@ -1,6 +1,6 @@
 <?php
 // Configuration
-$uploadDir = __DIR__ . '/uploads/';
+require_once __DIR__ . '/config.php';
 
 // Get ID
 $id = $_GET['id'] ?? '';

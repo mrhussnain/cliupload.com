@@ -74,7 +74,7 @@ CliUpload implements multiple layers of security:
 ### Steps
 1.  **Clone the Repo:**
     ```bash
-    git clone https://github.com/yourusername/cliupload.git
+    git clone https://github.com/mrhussnain/cliupload.git
     cd cliupload
     ```
 2.  **Set Permissions:**
@@ -90,8 +90,12 @@ CliUpload implements multiple layers of security:
     # Run every minute to check for expired files
     * * * * * php /var/www/cliupload.com/cleanup.php >> /var/www/cliupload.com/cleanup.log 2>&1
     ```
-4.  **Admin Secret:**
-    Change the default password in `admin.php`:
+4.  **Admin Secret & Configuration:**
+    Copy the example config and change the admin password:
+    ```bash
+    cp config.example.php config.php
+    ```
+    Then edit `config.php`:
     ```php
     $adminPassword = 'YOUR_NEW_PASSWORD';
     ```
@@ -129,4 +133,4 @@ RewriteRule ^([a-zA-Z0-9]+)$ download.php?id=$1 [L,QSA]
 This project is licensed under the MIT License - see the `LICENSE` file for details.
 
 ---
-*Developed with ❤️ by **[HussnainRaza](https://github.com/HussnainRaza)** for the CLI community. Powered by [HosterOcean.CoM](https://hosterocean.com).*
+*Developed with ❤️ by **[mrhussnain](https://github.com/mrhussnain)** for the CLI community. Powered by [HosterOcean.CoM](https://hosterocean.com).*

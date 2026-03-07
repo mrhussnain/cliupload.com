@@ -1,10 +1,6 @@
 <?php
 // Configuration
-$uploadDir = __DIR__ . '/uploads/';
-// Ensure upload directory exists
-if (!is_dir($uploadDir)) {
-    mkdir($uploadDir, 0755, true);
-}
+require_once __DIR__ . '/config.php';
 
 // Function to generate a random ID
 function generateId($length = 6) {

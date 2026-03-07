@@ -2,8 +2,7 @@
 session_start();
 
 // Configuration
-$adminPassword = 'changeme'; // Change this!
-$uploadDir = __DIR__ . '/uploads/';
+require_once __DIR__ . '/config.php';
 
 // Handle Login
 if (isset($_POST['password'])) {
@@ -216,7 +215,7 @@ function formatBytes($bytes, $precision = 2) {
     
     <div class="site-footer">
         <p>&copy; <?php echo date('Y'); ?> Secure Upload. All rights reserved.</p>
-        <p>Developed by <a href="https://github.com/HussnainRaza" target="_blank" style="color:var(--accent-color); text-decoration:none; font-weight:600;">HussnainRaza</a></p>
+        <p>Developed by <a href="https://github.com/mrhussnain" target="_blank" style="color:var(--accent-color); text-decoration:none; font-weight:600;">mrhussnain</a></p>
         <p>System Status: <span style="color:var(--success)">ONLINE</span></p>
     </div>
 </body>

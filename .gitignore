@@ -20,5 +20,7 @@ sess_*
 .cache/
 
 # Local configuration (if any)
+config.php
 config.local.php
 .env
+
