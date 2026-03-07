@@ -4,12 +4,26 @@ session_start();
 // Configuration
 require_once __DIR__ . '/config.php';
 
+// CSRF Protection
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+function check_csrf($token) {
+    return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token);
+}
+
 // Handle Login
 if (isset($_POST['password'])) {
-    if ($_POST['password'] === $adminPassword) {
-        $_SESSION['admin_logged_in'] = true;
+    if (check_csrf($_POST['csrf_token'] ?? '')) {
+        if ($_POST['password'] === $adminPassword) {
+            $_SESSION['admin_logged_in'] = true;
+        } else {
+            $error = 'Invalid password';
+            sleep(1); // Brute-force delay
+        }
     } else {
-        $error = 'Invalid password';
+        $error = 'CSRF validation failed';
     }
 }
 
@@ -43,6 +57,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
             <h1>Admin Login</h1>
             <?php if (isset($error)) echo "<p style='color:red'>$error</p>"; ?>
             <form method="post">
+                <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                 <div class="cli-input-group">
                     <label>Password</label>
                     <div class="cli-input-wrapper">
@@ -61,27 +76,35 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
 // Handle Deletion
 if (isset($_POST['delete'])) {
-    $id = $_POST['delete'];
-    // Validate ID
-    if (preg_match('/^[a-zA-Z0-9]+$/', $id)) {
-        if (file_exists($uploadDir . $id)) unlink($uploadDir . $id);
-        if (file_exists($uploadDir . $id . '.json')) unlink($uploadDir . $id . '.json');
-        $msg = "File $id deleted.";
+    if (check_csrf($_POST['csrf_token'] ?? '')) {
+        $id = $_POST['delete'];
+        // Validate ID
+        if (preg_match('/^[a-zA-Z0-9]+$/', $id)) {
+            if (file_exists($uploadDir . $id)) unlink($uploadDir . $id);
+            if (file_exists($uploadDir . $id . '.json')) unlink($uploadDir . $id . '.json');
+            $msg = "File $id deleted.";
+        }
+    } else {
+        $msg = "CSRF Error: Modification failed.";
     }
 }
 
 // Handle Delete All
 if (isset($_POST['delete_all'])) {
-    $count = 0;
-    foreach (glob($uploadDir . '*.json') as $metaFile) {
-        $id = basename($metaFile, '.json');
-        $dataFile = $uploadDir . $id;
-        
-        if (file_exists($dataFile)) unlink($dataFile);
-        if (file_exists($metaFile)) unlink($metaFile);
-        $count++;
+    if (check_csrf($_POST['csrf_token'] ?? '')) {
+        $count = 0;
+        foreach (glob($uploadDir . '*.json') as $metaFile) {
+            $id = basename($metaFile, '.json');
+            $dataFile = $uploadDir . $id;
+            
+            if (file_exists($dataFile)) unlink($dataFile);
+            if (file_exists($metaFile)) unlink($metaFile);
+            $count++;
+        }
+        $msg = "All files deleted ($count total).";
+    } else {
+        $msg = "CSRF Error: Operation blocked.";
     }
-    $msg = "All files deleted ($count total).";
 }
 
 // List Files
@@ -140,6 +163,7 @@ function formatBytes($bytes, $precision = 2) {
             <h1>Dashboard</h1>
             <div style="display:flex; gap:10px;">
                 <form method="post" onsubmit="return confirm('WARNING: This will delete ALL files. Are you sure?');" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                     <input type="hidden" name="delete_all" value="1">
                     <button type="submit" class="btn" style="width:auto; padding: 0.5rem 1rem; background: var(--error);">Delete All</button>
                 </form>
@@ -195,6 +219,7 @@ function formatBytes($bytes, $precision = 2) {
                         </td>
                         <td>
                             <form method="post" onsubmit="return confirm('Delete this file?');">
+                                <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                                 <input type="hidden" name="delete" value="<?php echo $f['id']; ?>">
                                 <button type="submit" style="background:none; border:none; color:#f85149; cursor:pointer;" title="Delete">🗑️</button>
                             </form>

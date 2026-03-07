@@ -1,7 +1,8 @@
 <?php
 // cleanup.php - Run this via cron, e.g., * * * * * php /path/to/cleanup.php
 
-$uploadDir = __DIR__ . '/uploads/';
+// Configuration
+require_once __DIR__ . '/config.php';
 $now = time();
 $deleted = 0;
 
