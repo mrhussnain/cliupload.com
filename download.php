@@ -370,11 +370,7 @@ $dangerousTypes = [
 ];
 
 // Determine disposition
-$disposition = 'attachment'; // Default to download
-// If you want to allow inline viewing for images/text/videos:
-if (strpos($mimeType, 'image/') === 0 || strpos($mimeType, 'video/') === 0 || $mimeType === 'text/plain') {
-    $disposition = 'inline';
-}
+$disposition = 'attachment'; // Always force download
 
 // Override to attachment if dangerous
 if (in_array($mimeType, $dangerousTypes)) {
