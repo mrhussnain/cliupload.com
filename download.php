@@ -72,13 +72,14 @@ if (isset($metadata['expiration']) && !empty($metadata['expiration'])) {
 // 2. Action Handling (Wait Page)
 $action = $_GET['action'] ?? 'download';
 $wait = isset($_GET['wait']);
+$raw = isset($_GET['raw']);
 
 // Detect CLI (curl/wget)
 $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $isCli = (strpos($ua, 'curl') !== false || strpos($ua, 'Wget') !== false);
 
-// Show Wait Page for Browser Downloads (unless already waited)
-if (!$isCli && !$wait && $action === 'download') {
+// Show Wait Page for Browser Downloads (unless already waited or raw requested)
+if (!$isCli && !$wait && !$raw && $action === 'download') {
     ?>
     <!DOCTYPE html>
     <html lang="en">
@@ -301,7 +302,6 @@ if ($action === 'view') {
 
 // 4. Encryption Handling
 $isEncrypted = $metadata['is_encrypted'] ?? false;
-$raw = isset($_GET['raw']);
 
 if ($isEncrypted && !$raw) {
     // Serve Decryption Page
@@ -327,24 +327,45 @@ if ($isEncrypted && !$raw) {
         <script>
             async function decryptAndDownload() {
                 try {
+                    console.log('=== DECRYPTION DEBUG START ===');
+
                     // 1. Get Key from URL
                     const hash = window.location.hash;
+                    console.log('1. URL hash:', hash);
+                    console.log('   Hash length:', hash.length);
+
                     if (!hash.includes('key=')) {
-                        throw new Error('Decryption key missing from URL.');
+                        throw new Error('Decryption key missing from URL. Expected #key=... in URL');
                     }
+
                     const hexKey = hash.split('key=')[1];
+                    console.log('2. Hex key extracted:', hexKey ? hexKey.substring(0, 16) + '...' : 'null');
+                    console.log('   Hex key length:', hexKey ? hexKey.length : 0);
+
+                    if (!hexKey || hexKey.length !== 64) {
+                        throw new Error('Invalid encryption key. Expected 64 hex characters, got ' + (hexKey ? hexKey.length : 0));
+                    }
+
                     const keyBytes = new Uint8Array(hexKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-                    
+                    console.log('3. Key bytes:', keyBytes.length, 'bytes');
+                    console.log('   First 4 bytes:', Array.from(keyBytes.slice(0, 4)));
+
                     // 2. Fetch Encrypted Blob
                     document.getElementById('status').textContent = 'Downloading encrypted data...';
+                    console.log('4. Fetching encrypted file...');
+
                     const response = await fetch('download.php?id=<?php echo $id; ?>&raw=1');
-                    if (!response.ok) throw new Error('Failed to download file.');
-                    
+                    console.log('   Response status:', response.status, response.statusText);
+
+                    if (!response.ok) throw new Error('Failed to download file. Status: ' + response.status);
+
                     const total = response.headers.get('Content-Length');
+                    console.log('   Content-Length:', total, 'bytes');
+
                     const reader = response.body.getReader();
                     let receivedLength = 0;
                     let chunks = [];
-                    
+
                     while(true) {
                         const {done, value} = await reader.read();
                         if (done) break;
@@ -354,32 +375,47 @@ if ($isEncrypted && !$raw) {
                              document.getElementById('progressBar').style.width = Math.round((receivedLength / total) * 100) + '%';
                         }
                     }
-                    
+
+                    console.log('5. Download complete:', receivedLength, 'bytes received');
+
                     const encryptedBlob = new Blob(chunks);
                     const encryptedBuf = await encryptedBlob.arrayBuffer();
-                    
+                    console.log('6. ArrayBuffer size:', encryptedBuf.byteLength, 'bytes');
+
                     // 3. Decrypt
                     if (encryptedBuf.byteLength < 28) { // 12 bytes IV + 16 bytes tag (min)
-                         throw new Error('Download incomplete or file empty (' + encryptedBuf.byteLength + ' bytes).');
+                         throw new Error('Download incomplete or file empty (' + encryptedBuf.byteLength + ' bytes). Expected at least 28 bytes.');
                     }
 
                     document.getElementById('status').textContent = 'Decrypting...';
-                    
+
                     // Extract IV (first 12 bytes)
-                    const iv = encryptedBuf.slice(0, 12);
+                    const iv = new Uint8Array(encryptedBuf.slice(0, 12));
                     const data = encryptedBuf.slice(12);
-                    
+
+                    console.log('7. IV extracted:', iv.length, 'bytes');
+                    console.log('   IV bytes:', Array.from(iv));
+                    console.log('8. Encrypted data:', data.byteLength, 'bytes');
+                    console.log('   First 4 bytes of encrypted data:', Array.from(new Uint8Array(data.slice(0, 4))));
+
                     const alg = { name: 'AES-GCM', iv: iv };
+                    console.log('9. Importing key...');
+
                     const keyObj = await window.crypto.subtle.importKey(
                         'raw', keyBytes, alg, false, ['decrypt']
                     );
-                    
+                    console.log('   Key imported successfully');
+
+                    console.log('10. Starting decryption (this is where OperationError usually occurs)...');
                     const decryptedBuf = await window.crypto.subtle.decrypt(alg, keyObj, data);
-                    
+
+                    console.log('11. ✅ Decryption successful!');
+                    console.log('    Decrypted size:', decryptedBuf.byteLength, 'bytes');
+
                     // 4. Trigger Download
                     document.getElementById('status').textContent = 'Done! Saving...';
                     document.getElementById('progressBar').style.width = '100%';
-                    
+
                     const decryptedBlob = new Blob([decryptedBuf]);
                     const url = URL.createObjectURL(decryptedBlob);
                     const a = document.createElement('a');
@@ -388,10 +424,26 @@ if ($isEncrypted && !$raw) {
                     document.body.appendChild(a);
                     a.click();
                     window.URL.revokeObjectURL(url);
-                    
+
+                    console.log('=== DECRYPTION DEBUG END - SUCCESS ===');
+
                 } catch (err) {
-                    console.error(err);
-                    document.getElementById('error').textContent = err.name + ': ' + err.message;
+                    console.error('=== DECRYPTION FAILED ===');
+                    console.error('Error name:', err.name);
+                    console.error('Error message:', err.message);
+                    console.error('Error stack:', err.stack);
+
+                    let errorMessage = err.name + ': ' + err.message;
+
+                    if (err.name === 'OperationError' || err.message.toLowerCase().includes('decrypt')) {
+                        errorMessage += '\n\n⚠️ This usually means:\n';
+                        errorMessage += '• The encryption key in the URL is incorrect\n';
+                        errorMessage += '• The file was corrupted during upload\n';
+                        errorMessage += '• The file format doesn\'t match expected encryption\n\n';
+                        errorMessage += 'Check browser console (F12) for detailed debug logs.';
+                    }
+
+                    document.getElementById('error').textContent = errorMessage;
                     document.getElementById('error').style.display = 'block';
                     document.getElementById('status').textContent = 'Error';
                 }
