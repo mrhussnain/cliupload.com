@@ -1,26 +1,190 @@
-# CliUpload - Git Ignore
-# Ignore uploaded files
-uploads/
+# CliUpload - Git Ignore Configuration
+# Updated: 2026-03-23
+
+###################
+# Uploaded Files
+###################
+uploads/*
+!uploads/.htaccess
 *.bin
 *.enc
 *.json
+*.json.bak
 
+
+###################
 # Logs
+###################
+logs/
 *.log
 cleanup.log
 
-# Temporary/Sensitive files
-secret.txt
-cookies.txt
-.DS_Store
-Thumbs.db
-
-# Sessions and cache
-sess_*
-.cache/
-
-# Local configuration (if any)
+###################
+# Sensitive Configuration - NEVER COMMIT
+###################
+.env
 config.php
 config.local.php
-.env
+secret.txt
+cookies.txt
 
+###################
+# Database
+###################
+*.sql.gz
+*.sql.bak
+*.db
+*.sqlite
+*.sqlite3
+backup/
+backups/
+
+###################
+# IDE and Editor Files
+###################
+# Claude Code
+.claude/
+.claude/*
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# PhpStorm / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.*.swp
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# NetBeans
+nbproject/
+
+###################
+# Operating System
+###################
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+
+###################
+# PHP / Composer
+###################
+vendor/
+composer.lock
+composer.phar
+
+###################
+# Node.js (if used)
+###################
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+.npm
+.yarn
+
+###################
+# Sessions and Cache
+###################
+sess_*
+sessions/
+cache/
+.cache/
+tmp/
+temp/
+*.cache
+
+###################
+# Testing
+###################
+.phpunit.result.cache
+phpunit.xml
+coverage/
+.coverage
+
+###################
+# Build / Deployment
+###################
+dist/
+build/
+*.tar.gz
+*.zip
+*.tar
+*.rar
+release/
+
+###################
+# SSL Certificates (if locally stored)
+###################
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+ssl/
+certs/
+
+###################
+# Miscellaneous
+###################
+*.bak
+*.old
+*.orig
+*.tmp
+.htpasswd
+.ftpconfig
+error_log
+php_errors.log
+
+###################
+# Git Specific
+###################
+*.patch
+*.diff
+
+###################
+# Environment Specific
+###################
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.staging

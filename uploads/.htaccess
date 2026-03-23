@@ -1,0 +1,14 @@
+# CliUpload - Secure Uploads Directory
+# Deny all direct web access. File downloads are handled via download.php
+# Local file operations continue to work.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+
+# For extra security, prevent indexing even if access is allowed later
+Options -Indexes

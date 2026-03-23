@@ -2,28 +2,23 @@
 // Configuration
 require_once __DIR__ . '/config.php';
 
-// Function to generate a random ID
-function generateId($length = 6) {
-    $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    $charactersLength = strlen($characters);
-    $randomString = '';
-    for ($i = 0; $i < $length; $i++) {
-        $randomString .= $characters[rand(0, $charactersLength - 1)];
-    }
-    return $randomString;
-}
-
 // Check if it's a file upload (POST or PUT)
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'POST' || $method === 'PUT') {
+    // Rate limiting check
+    if (!checkRateLimit('uploads')) {
+        http_response_code(429);
+        die("Rate limit exceeded. Please try again later.\n");
+    }
+
     // Disable timeout for large uploads
     set_time_limit(0);
-    
+
     $response = [];
     $isCli = false;
     // Check if request is from curl/cli
-    if (strpos($_SERVER['HTTP_USER_AGENT'] ?? '', 'curl') !== false || 
+    if (strpos($_SERVER['HTTP_USER_AGENT'] ?? '', 'curl') !== false ||
         strpos($_SERVER['HTTP_USER_AGENT'] ?? '', 'Wget') !== false) {
         $isCli = true;
     }
@@ -87,12 +82,13 @@ if ($method === 'POST' || $method === 'PUT') {
         $fp = fopen($tmpPath, "w");
         
         $size = 0;
-        $maxSize = 2 * 1024 * 1024 * 1024; // 2GB
-        
+        $maxSize = $securityConfig['max_file_size'];
+
         while ($data = fread($putData, 8192)) {
             $size += strlen($data);
             if ($size > $maxSize) {
-                $response = ['error' => 'File too large. Max 2GB.'];
+                $response = ['error' => 'File too large. Max ' . round($maxSize / (1024*1024*1024), 1) . 'GB.'];
+                logError("Upload failed: file too large", ['size' => $size, 'ip' => $_SERVER['REMOTE_ADDR']]);
                 break;
             }
             fwrite($fp, $data);
@@ -117,22 +113,60 @@ if ($method === 'POST' || $method === 'PUT') {
             }
             
             // Generate unique ID
+            $id = null;
+            $attempts = 0;
+            $idGenerated = false;
+
             do {
                 $id = generateId();
-            } while (file_exists($uploadDir . $id));
-            
-            if (rename($tmpPath, $uploadDir . $id)) {
-                 $metadata = [
-                    'original_name' => $filename,
-                    'mime_type' => 'application/octet-stream', // improved detection could be added here
-                    'size' => $size,
-                    'uploaded_at' => time(),
-                    'id' => $id,
-                    'password_hash' => $password ? password_hash($password, PASSWORD_DEFAULT) : null,
-                    'expiration' => $expiration,
-                    'one_time_view' => $oneTimeView
-                ];
-                file_put_contents($uploadDir . $id . '.json', json_encode($metadata));
+                $attempts++;
+                if ($attempts > 10) {
+                    $response = ['error' => 'Failed to generate unique ID. Please try again.'];
+                    logError("Failed to generate unique ID after 10 attempts");
+                    break;
+                }
+                if (!file_exists($uploadDir . $id) && checkIdUnique($id)) {
+                    $idGenerated = true;
+                    break;
+                }
+            } while ($attempts <= 10);
+
+            if ($idGenerated && rename($tmpPath, $uploadDir . $id)) {
+                try {
+                    // Store metadata in database
+                    $stmt = $db->prepare("
+                        INSERT INTO files (
+                            id, original_name, mime_type, size, uploaded_at,
+                            password_hash, expiration, is_encrypted, one_time_view,
+                            ip_address, user_agent
+                        ) VALUES (
+                            ?, ?, ?, ?, FROM_UNIXTIME(?),
+                            ?, FROM_UNIXTIME(?), 0, ?,
+                            ?, ?
+                        )
+                    ");
+
+                    $stmt->execute([
+                        $id,
+                        $filename,
+                        'application/octet-stream',
+                        $size,
+                        time(),
+                        $password ? password_hash($password, PASSWORD_DEFAULT) : null,
+                        $expiration,
+                        $oneTimeView ? 1 : 0,
+                        $_SERVER['REMOTE_ADDR'] ?? null,
+                        substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255)
+                    ]);
+
+                    logActivity('file_uploaded', $id, "Size: $size bytes, CLI upload");
+                } catch (PDOException $e) {
+                    // Rollback - delete uploaded file
+                    unlink($uploadDir . $id);
+                    $response = ['error' => 'Database error. Please try again.'];
+                    logError("Database insert failed during PUT upload", ['error' => $e->getMessage(), 'id' => $id]);
+                    exit;
+                }
                 
                 $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
                 if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
@@ -176,30 +210,74 @@ if ($method === 'POST' || $method === 'PUT') {
             }
             
             // Basic validation
-            $maxSize = 2 * 1024 * 1024 * 1024; // 2GB
+            $maxSize = $securityConfig['max_file_size'];
             if ($file['size'] > $maxSize) {
-                $response = ['error' => 'File too large. Max 2GB.'];
+                $response = ['error' => 'File too large. Max ' . round($maxSize / (1024*1024*1024), 1) . 'GB.'];
+                logError("Upload failed: file too large", ['size' => $file['size'], 'ip' => $_SERVER['REMOTE_ADDR']]);
             } else {
                 // Generate unique ID
+                $id = null;
+                $attempts = 0;
+                $idGenerated = false;
+
                 do {
                     $id = generateId();
-                } while (file_exists($uploadDir . $id));
-                
+                    $attempts++;
+                    if ($attempts > 10) {
+                        $response = ['error' => 'Failed to generate unique ID. Please try again.'];
+                        logError("Failed to generate unique ID after 10 attempts");
+                        break;
+                    }
+                    if (!file_exists($uploadDir . $id) && checkIdUnique($id)) {
+                        $idGenerated = true;
+                        break;
+                    }
+                } while ($attempts <= 10);
+
                 // Move file
-                if (move_uploaded_file($file['tmp_name'], $uploadDir . $id)) {
-                    // Store metadata
-                    $metadata = [
-                        'original_name' => basename($file['name']),
-                        'mime_type' => $file['type'],
-                        'size' => $file['size'],
-                        'uploaded_at' => time(),
-                        'id' => $id,
-                        'password_hash' => $password ? password_hash($password, PASSWORD_DEFAULT) : null,
-                        'expiration' => $expiration,
-                        'is_encrypted' => isset($_POST['is_encrypted']) && $_POST['is_encrypted'] === '1',
-                        'one_time_view' => $oneTimeView
-                    ];
-                    file_put_contents($uploadDir . $id . '.json', json_encode($metadata));
+                if ($idGenerated && move_uploaded_file($file['tmp_name'], $uploadDir . $id)) {
+                    try {
+                        // Store metadata in database
+                        $stmt = $db->prepare("
+                            INSERT INTO files (
+                                id, original_name, mime_type, size, uploaded_at,
+                                password_hash, expiration, is_encrypted, one_time_view,
+                                ip_address, user_agent
+                            ) VALUES (
+                                ?, ?, ?, ?, FROM_UNIXTIME(?),
+                                ?, FROM_UNIXTIME(?), ?, ?,
+                                ?, ?
+                            )
+                        ");
+
+                        $stmt->execute([
+                            $id,
+                            basename($file['name']),
+                            $file['type'],
+                            $file['size'],
+                            time(),
+                            $password ? password_hash($password, PASSWORD_DEFAULT) : null,
+                            $expiration,
+                            isset($_POST['is_encrypted']) && $_POST['is_encrypted'] === '1' ? 1 : 0,
+                            $oneTimeView ? 1 : 0,
+                            $_SERVER['REMOTE_ADDR'] ?? null,
+                            substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255)
+                        ]);
+
+                        logActivity('file_uploaded', $id, "Size: {$file['size']} bytes, Web upload");
+                    } catch (PDOException $e) {
+                        // Rollback - delete uploaded file
+                        unlink($uploadDir . $id);
+                        $response = ['error' => 'Database error. Please try again.'];
+                        logError("Database insert failed during POST upload", ['error' => $e->getMessage(), 'id' => $id]);
+                        if ($isAjax) {
+                            header('Content-Type: application/json');
+                            echo json_encode($response);
+                            exit;
+                        } else {
+                            die("Upload failed. Please try again.");
+                        }
+                    }
                     
                     // Construct URL configuration
                     $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";

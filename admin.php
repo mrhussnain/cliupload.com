@@ -16,22 +16,55 @@ function check_csrf($token) {
 // Handle Login
 if (isset($_POST['password'])) {
     if (check_csrf($_POST['csrf_token'] ?? '')) {
-        if ($_POST['password'] === $adminPassword) {
-            $_SESSION['admin_logged_in'] = true;
+        // Rate limiting for login attempts
+        if (!checkRateLimit('admin_login_attempts')) {
+            $error = 'Too many login attempts. Please try again later.';
+            logActivity('admin_login_blocked', null, 'Rate limit exceeded');
         } else {
-            $error = 'Invalid password';
-            sleep(1); // Brute-force delay
+            // Get admin credentials from database
+            try {
+                $username = $_POST['username'] ?? 'admin';
+                $stmt = $db->prepare("SELECT * FROM admin_settings WHERE username = ?");
+                $stmt->execute([$username]);
+                $admin = $stmt->fetch();
+
+                if ($admin && password_verify($_POST['password'], $admin['password_hash'])) {
+                    // Regenerate session ID to prevent fixation
+                    session_regenerate_id(true);
+
+                    $_SESSION['admin_logged_in'] = true;
+                    $_SESSION['admin_id'] = $admin['id'];
+                    $_SESSION['admin_username'] = $admin['username'];
+
+                    logActivity('admin_login_success', null, "User: {$admin['username']}");
+
+                    // Redirect to prevent form resubmission
+                    header('Location: admin.php');
+                    exit;
+                } else {
+                    $error = 'Invalid credentials';
+                    sleep(2); // Brute-force delay
+                    logActivity('admin_login_failed', null, "Username: $username");
+                }
+            } catch (PDOException $e) {
+                $error = 'Service temporarily unavailable';
+                logError("Admin login database error", ['error' => $e->getMessage()]);
+            }
         }
     } else {
         $error = 'CSRF validation failed';
+        logActivity('admin_csrf_failed', null, 'Login attempt with invalid CSRF token');
     }
 }
 
 // Handle Logout
-if (isset($_GET['logout'])) {
-    session_destroy();
-    header('Location: admin.php');
-    exit;
+if (isset($_POST['logout'])) {
+    if (check_csrf($_POST['csrf_token'] ?? '')) {
+        logActivity('admin_logout', null, "User: " . ($_SESSION['admin_username'] ?? 'unknown'));
+        session_destroy();
+        header('Location: admin.php');
+        exit;
+    }
 }
 
 // Check Auth
@@ -55,9 +88,16 @@ if (!isset($_SESSION['admin_logged_in'])) {
         </nav>
         <div class="card">
             <h1>Admin Login</h1>
-            <?php if (isset($error)) echo "<p style='color:red'>$error</p>"; ?>
+            <?php if (isset($error)) echo "<p style='color:red'>" . htmlspecialchars($error) . "</p>"; ?>
             <form method="post">
                 <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                <div class="cli-input-group">
+                    <label>Username</label>
+                    <div class="cli-input-wrapper">
+                        <span class="cli-prompt">&gt;</span>
+                        <input type="text" name="username" placeholder="admin" value="admin" required>
+                    </div>
+                </div>
                 <div class="cli-input-group">
                     <label>Password</label>
                     <div class="cli-input-wrapper">
@@ -80,9 +120,20 @@ if (isset($_POST['delete'])) {
         $id = $_POST['delete'];
         // Validate ID
         if (preg_match('/^[a-zA-Z0-9]+$/', $id)) {
-            if (file_exists($uploadDir . $id)) unlink($uploadDir . $id);
-            if (file_exists($uploadDir . $id . '.json')) unlink($uploadDir . $id . '.json');
-            $msg = "File $id deleted.";
+            try {
+                // Delete from filesystem
+                if (file_exists($uploadDir . $id)) unlink($uploadDir . $id);
+
+                // Delete from database
+                $stmt = $db->prepare("DELETE FROM files WHERE id = ?");
+                $stmt->execute([$id]);
+
+                $msg = "File $id deleted.";
+                logActivity('admin_file_deleted', $id, "Deleted by admin");
+            } catch (PDOException $e) {
+                $msg = "Error deleting file: " . $e->getMessage();
+                logError("Admin file deletion failed", ['error' => $e->getMessage(), 'id' => $id]);
+            }
         }
     } else {
         $msg = "CSRF Error: Modification failed.";
@@ -92,34 +143,47 @@ if (isset($_POST['delete'])) {
 // Handle Delete All
 if (isset($_POST['delete_all'])) {
     if (check_csrf($_POST['csrf_token'] ?? '')) {
-        $count = 0;
-        foreach (glob($uploadDir . '*.json') as $metaFile) {
-            $id = basename($metaFile, '.json');
-            $dataFile = $uploadDir . $id;
-            
-            if (file_exists($dataFile)) unlink($dataFile);
-            if (file_exists($metaFile)) unlink($metaFile);
-            $count++;
+        try {
+            // Get all file IDs
+            $stmt = $db->query("SELECT id FROM files");
+            $fileIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+            $count = 0;
+            foreach ($fileIds as $id) {
+                if (file_exists($uploadDir . $id)) {
+                    unlink($uploadDir . $id);
+                }
+                $count++;
+            }
+
+            // Delete all from database
+            $db->exec("DELETE FROM files");
+
+            $msg = "All files deleted ($count total).";
+            logActivity('admin_delete_all', null, "Deleted all files: $count");
+        } catch (PDOException $e) {
+            $msg = "Error deleting files: " . $e->getMessage();
+            logError("Admin delete all failed", ['error' => $e->getMessage()]);
         }
-        $msg = "All files deleted ($count total).";
     } else {
         $msg = "CSRF Error: Operation blocked.";
     }
 }
 
-// List Files
+// List Files from Database
 $files = [];
-foreach (glob($uploadDir . '*.json') as $metaFile) {
-    $metadata = json_decode(file_get_contents($metaFile), true);
-    if ($metadata) {
-        $files[] = $metadata;
-    }
+try {
+    $stmt = $db->query("
+        SELECT *, UNIX_TIMESTAMP(uploaded_at) as uploaded_at_unix,
+               UNIX_TIMESTAMP(expiration) as expiration_unix
+        FROM files
+        ORDER BY uploaded_at DESC
+    ");
+    $files = $stmt->fetchAll();
+} catch (PDOException $e) {
+    logError("Failed to fetch files list", ['error' => $e->getMessage()]);
+    $error = "Failed to load files list.";
 }
-
-// Sort by date desc
-usort($files, function($a, $b) {
-    return $b['uploaded_at'] - $a['uploaded_at'];
-});
 
 function formatBytes($bytes, $precision = 2) { 
     $units = array('B', 'KB', 'MB', 'GB', 'TB'); 
@@ -167,7 +231,11 @@ function formatBytes($bytes, $precision = 2) {
                     <input type="hidden" name="delete_all" value="1">
                     <button type="submit" class="btn" style="width:auto; padding: 0.5rem 1rem; background: var(--error);">Delete All</button>
                 </form>
-                <a href="?logout" class="btn" style="width:auto; padding: 0.5rem 1rem;">Logout</a>
+                <form method="post" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                    <input type="hidden" name="logout" value="1">
+                    <button type="submit" class="btn" style="width:auto; padding: 0.5rem 1rem;">Logout</button>
+                </form>
             </div>
         </div>
         
@@ -198,13 +266,13 @@ function formatBytes($bytes, $precision = 2) {
                             <?php echo htmlspecialchars(strlen($f['original_name']) > 20 ? substr($f['original_name'],0,20).'...' : $f['original_name']); ?>
                         </td>
                         <td><?php echo formatBytes($f['size']); ?></td>
-                        <td><?php echo date('M j, H:i', $f['uploaded_at']); ?></td>
+                        <td><?php echo date('M j, H:i', $f['uploaded_at_unix']); ?></td>
                         <td>
-                            <?php 
-                            if ($f['expiration']) {
-                                $timeLeft = $f['expiration'] - time();
+                            <?php
+                            if ($f['expiration_unix']) {
+                                $timeLeft = $f['expiration_unix'] - time();
                                 if ($timeLeft < 0) echo '<span class="badge badge-red">Expired</span>';
-                                else echo date('M j, H:i', $f['expiration']);
+                                else echo date('M j, H:i', $f['expiration_unix']);
                             } else {
                                 echo '<span class="text-muted">-</span>';
                             }

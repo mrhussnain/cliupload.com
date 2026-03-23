@@ -2,34 +2,68 @@
 // Configuration
 require_once __DIR__ . '/config.php';
 
+// Rate limiting check
+if (!checkRateLimit('downloads')) {
+    http_response_code(429);
+    die('Rate limit exceeded. Please try again later.');
+}
+
 // Get ID
 $id = $_GET['id'] ?? '';
 
 // Sanitize ID (alphanumeric only to prevent traversal)
 if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) {
+    logActivity('invalid_download_attempt', null, "Invalid ID format: $id");
+    http_response_code(400);
     die('Invalid ID');
 }
 
 $startFile = $uploadDir . $id;
-$metaFile = $uploadDir . $id . '.json';
 
-if (!file_exists($startFile) || !file_exists($metaFile)) {
+// Check if file exists on filesystem
+if (!file_exists($startFile)) {
+    logActivity('file_not_found', $id, 'File missing from filesystem');
     http_response_code(404);
     die('File not found');
 }
 
-// Read metadata
-$metadata = json_decode(file_get_contents($metaFile), true);
+// Read metadata from database
+try {
+    $stmt = $db->prepare("SELECT * FROM files WHERE id = ?");
+    $stmt->execute([$id]);
+    $metadata = $stmt->fetch();
+
+    if (!$metadata) {
+        logActivity('file_not_found', $id, 'File missing from database');
+        http_response_code(404);
+        die('File not found');
+    }
+} catch (PDOException $e) {
+    logError("Database query failed in download.php", ['error' => $e->getMessage(), 'id' => $id]);
+    http_response_code(500);
+    die('Service temporarily unavailable');
+}
+
 $originalName = $metadata['original_name'] ?? 'download';
 $mimeType = $metadata['mime_type'] ?? 'application/octet-stream';
 $fileSize = $metadata['size'] ?? filesize($startFile);
 
 // 1. Expiration Check
 if (isset($metadata['expiration']) && !empty($metadata['expiration'])) {
-    if (time() > $metadata['expiration']) {
+    $expirationTime = is_numeric($metadata['expiration']) ? $metadata['expiration'] : strtotime($metadata['expiration']);
+    if (time() > $expirationTime) {
         // Delete expired file
-        unlink($startFile);
-        unlink($metaFile);
+        try {
+            if (file_exists($startFile)) unlink($startFile);
+
+            $stmt = $db->prepare("DELETE FROM files WHERE id = ?");
+            $stmt->execute([$id]);
+
+            logActivity('file_expired', $id, 'File expired and deleted');
+        } catch (PDOException $e) {
+            logError("Failed to delete expired file", ['error' => $e->getMessage(), 'id' => $id]);
+        }
+
         http_response_code(410); // Gone
         die('File has expired and been deleted.');
     }
@@ -213,8 +247,8 @@ if ($action === 'view') {
     
     // Read content safely
     // Check size first - don't preview huge files
-    if ($fileSize > 1 * 1024 * 1024) { // 1MB limit for preview
-        die('File too large to preview.');
+    if ($fileSize > $securityConfig['max_preview_size']) {
+        die('File too large to preview. Max ' . round($securityConfig['max_preview_size'] / 1024) . 'KB.');
     }
     
     $content = file_get_contents($startFile);
@@ -251,8 +285,16 @@ if ($action === 'view') {
     <?php
     // If 1-View, delete after preview
     if (isset($metadata['one_time_view']) && $metadata['one_time_view']) {
-        unlink($startFile);
-        unlink($metaFile);
+        try {
+            if (file_exists($startFile)) unlink($startFile);
+
+            $stmt = $db->prepare("DELETE FROM files WHERE id = ?");
+            $stmt->execute([$id]);
+
+            logActivity('one_time_view_deleted', $id, 'Preview - burn after reading');
+        } catch (PDOException $e) {
+            logError("Failed to delete one-time view file after preview", ['error' => $e->getMessage(), 'id' => $id]);
+        }
     }
     exit;
 }
@@ -396,15 +438,26 @@ readfile($startFile);
 
 // 1-View Expiration: Delete after serving
 if (isset($metadata['one_time_view']) && $metadata['one_time_view']) {
-    // Only delete if we actually served the file (which we just did)
-    // For encrypted files, this happens when ?raw=1 is called.
-    // For regular files, this happens on direct download.
-    // For preview (action=view), we normally just show content. 
-    // If preview is "1 view", should we delete? Yes.
-    // Logic for preview was handled above with exit. Need to handle deletion there too.
-    
-    unlink($startFile);
-    unlink($metaFile);
+    try {
+        if (file_exists($startFile)) unlink($startFile);
+
+        $stmt = $db->prepare("DELETE FROM files WHERE id = ?");
+        $stmt->execute([$id]);
+
+        logActivity('one_time_view_deleted', $id, 'Download - burn after reading');
+    } catch (PDOException $e) {
+        logError("Failed to delete one-time view file after download", ['error' => $e->getMessage(), 'id' => $id]);
+    }
+} else {
+    // Increment view count for non-one-time files
+    try {
+        $stmt = $db->prepare("UPDATE files SET view_count = view_count + 1 WHERE id = ?");
+        $stmt->execute([$id]);
+
+        logActivity('file_downloaded', $id, 'File successfully downloaded');
+    } catch (PDOException $e) {
+        logError("Failed to update view count", ['error' => $e->getMessage(), 'id' => $id]);
+    }
 }
 
 exit;
