@@ -1,4 +1,5 @@
 <?php
+session_start();
 // Configuration
 require_once __DIR__ . '/config.php';
 
@@ -165,12 +166,13 @@ if (!$isCli && !$wait && !$raw && $action === 'download') {
 
 // 3. Password Check
 if (isset($metadata['password_hash']) && !empty($metadata['password_hash'])) {
-    $authenticated = false;
+    $authenticated = isset($_SESSION['file_auth_' . $id]) && $_SESSION['file_auth_' . $id];
     
     // Check if password was submitted
     if (isset($_POST['password'])) {
         if (password_verify($_POST['password'], $metadata['password_hash'])) {
             $authenticated = true;
+            $_SESSION['file_auth_' . $id] = true;
         } else {
             $error = 'Incorrect password';
         }
@@ -327,41 +329,26 @@ if ($isEncrypted && !$raw) {
         <script>
             async function decryptAndDownload() {
                 try {
-                    console.log('=== DECRYPTION DEBUG START ===');
-
                     // 1. Get Key from URL
                     const hash = window.location.hash;
-                    console.log('1. URL hash:', hash);
-                    console.log('   Hash length:', hash.length);
-
                     if (!hash.includes('key=')) {
-                        throw new Error('Decryption key missing from URL. Expected #key=... in URL');
+                        throw new Error('Decryption key missing from URL.');
                     }
 
                     const hexKey = hash.split('key=')[1];
-                    console.log('2. Hex key extracted:', hexKey ? hexKey.substring(0, 16) + '...' : 'null');
-                    console.log('   Hex key length:', hexKey ? hexKey.length : 0);
-
                     if (!hexKey || hexKey.length !== 64) {
-                        throw new Error('Invalid encryption key. Expected 64 hex characters, got ' + (hexKey ? hexKey.length : 0));
+                        throw new Error('Invalid encryption key.');
                     }
 
                     const keyBytes = new Uint8Array(hexKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-                    console.log('3. Key bytes:', keyBytes.length, 'bytes');
-                    console.log('   First 4 bytes:', Array.from(keyBytes.slice(0, 4)));
 
                     // 2. Fetch Encrypted Blob
                     document.getElementById('status').textContent = 'Downloading encrypted data...';
-                    console.log('4. Fetching encrypted file...');
 
                     const response = await fetch('download.php?id=<?php echo $id; ?>&raw=1');
-                    console.log('   Response status:', response.status, response.statusText);
-
-                    if (!response.ok) throw new Error('Failed to download file. Status: ' + response.status);
+                    if (!response.ok) throw new Error('Failed to download file.');
 
                     const total = response.headers.get('Content-Length');
-                    console.log('   Content-Length:', total, 'bytes');
-
                     const reader = response.body.getReader();
                     let receivedLength = 0;
                     let chunks = [];
@@ -376,41 +363,25 @@ if ($isEncrypted && !$raw) {
                         }
                     }
 
-                    console.log('5. Download complete:', receivedLength, 'bytes received');
-
                     const encryptedBlob = new Blob(chunks);
                     const encryptedBuf = await encryptedBlob.arrayBuffer();
-                    console.log('6. ArrayBuffer size:', encryptedBuf.byteLength, 'bytes');
 
                     // 3. Decrypt
-                    if (encryptedBuf.byteLength < 28) { // 12 bytes IV + 16 bytes tag (min)
-                         throw new Error('Download incomplete or file empty (' + encryptedBuf.byteLength + ' bytes). Expected at least 28 bytes.');
+                    if (encryptedBuf.byteLength < 28) {
+                         throw new Error('Download incomplete or file empty.');
                     }
 
                     document.getElementById('status').textContent = 'Decrypting...';
 
-                    // Extract IV (first 12 bytes)
                     const iv = new Uint8Array(encryptedBuf.slice(0, 12));
                     const data = encryptedBuf.slice(12);
 
-                    console.log('7. IV extracted:', iv.length, 'bytes');
-                    console.log('   IV bytes:', Array.from(iv));
-                    console.log('8. Encrypted data:', data.byteLength, 'bytes');
-                    console.log('   First 4 bytes of encrypted data:', Array.from(new Uint8Array(data.slice(0, 4))));
-
                     const alg = { name: 'AES-GCM', iv: iv };
-                    console.log('9. Importing key...');
-
                     const keyObj = await window.crypto.subtle.importKey(
                         'raw', keyBytes, alg, false, ['decrypt']
                     );
-                    console.log('   Key imported successfully');
 
-                    console.log('10. Starting decryption (this is where OperationError usually occurs)...');
                     const decryptedBuf = await window.crypto.subtle.decrypt(alg, keyObj, data);
-
-                    console.log('11. ✅ Decryption successful!');
-                    console.log('    Decrypted size:', decryptedBuf.byteLength, 'bytes');
 
                     // 4. Trigger Download
                     document.getElementById('status').textContent = 'Done! Saving...';
@@ -425,22 +396,12 @@ if ($isEncrypted && !$raw) {
                     a.click();
                     window.URL.revokeObjectURL(url);
 
-                    console.log('=== DECRYPTION DEBUG END - SUCCESS ===');
-
                 } catch (err) {
-                    console.error('=== DECRYPTION FAILED ===');
-                    console.error('Error name:', err.name);
-                    console.error('Error message:', err.message);
-                    console.error('Error stack:', err.stack);
-
-                    let errorMessage = err.name + ': ' + err.message;
+                    console.error('Decryption failed:', err);
+                    let errorMessage = err.message;
 
                     if (err.name === 'OperationError' || err.message.toLowerCase().includes('decrypt')) {
-                        errorMessage += '\n\n⚠️ This usually means:\n';
-                        errorMessage += '• The encryption key in the URL is incorrect\n';
-                        errorMessage += '• The file was corrupted during upload\n';
-                        errorMessage += '• The file format doesn\'t match expected encryption\n\n';
-                        errorMessage += 'Check browser console (F12) for detailed debug logs.';
+                        errorMessage = 'Decryption failed. This usually means the key is incorrect or the file is corrupted.';
                     }
 
                     document.getElementById('error').textContent = errorMessage;
